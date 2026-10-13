@@ -77,26 +77,32 @@ const QFont* PlatformTheme::font(Font type) const
         case ComboLineEditFont: {
             const QString &fontName = m_hints->systemFont();
             qreal fontSize = m_hints->systemFontPointSize();
-            static QFont font = QFont(QString());
-            font.setFamily(fontName);
-            font.setPointSizeF(fontSize);
+            static QFont font(QString(), -1);
+            if (font.family() != fontName || !qFuzzyCompare(font.pointSizeF(), fontSize)) {
+                font.setFamily(fontName);
+                font.setPointSizeF(fontSize);
+            }
             return &font;
         }
         case FixedFont: {
             const QString &fontName = m_hints->systemFixedFont();
             qreal fontSize = m_hints->systemFontPointSize();
-            static QFont font = QFont(QString());
-            font.setFamily(fontName);
-            font.setPointSizeF(fontSize);
-            return &font;
+            static QFont fixedFont(QString(), -1);
+            if (fixedFont.family() != fontName || !qFuzzyCompare(fixedFont.pointSizeF(), fontSize)) {
+                fixedFont.setFamily(fontName);
+                fixedFont.setPointSizeF(fontSize);
+            }
+            return &fixedFont;
         }
         default: {
             const QString &fontName = m_hints->systemFont();
             qreal fontSize = m_hints->systemFontPointSize();
-            static QFont font = QFont(QString());
-            font.setFamily(fontName);
-            font.setPointSizeF(fontSize);
-            return &font;
+            static QFont defaultFont(QString(), -1);
+            if (defaultFont.family() != fontName || !qFuzzyCompare(defaultFont.pointSizeF(), fontSize)) {
+                defaultFont.setFamily(fontName);
+                defaultFont.setPointSizeF(fontSize);
+            }
+            return &defaultFont;
         }
     }
 
@@ -105,9 +111,7 @@ const QFont* PlatformTheme::font(Font type) const
 
 void PlatformTheme::onFontChanged()
 {
-    QFont font;
-    font.setFamily(m_hints->systemFont());
-    font.setPointSizeF(m_hints->systemFontPointSize());
+    QFont font(m_hints->systemFont(), m_hints->systemFontPointSize());
 
     // Change font
     if (qobject_cast<QApplication *>(QCoreApplication::instance()))
