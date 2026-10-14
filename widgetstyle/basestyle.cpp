@@ -259,11 +259,13 @@ namespace Phantom
             }
             QColor specularOf(const QColor& underlying)
             {
-                return adjustLightness(underlying, 0.01);
+                Q_UNUSED(underlying);
+                return QColor(Qt::transparent);
             }
             QColor lightSpecularOf(const QColor& underlying)
             {
-                return adjustLightness(underlying, 0.05);
+                Q_UNUSED(underlying);
+                return QColor(Qt::transparent);
             }
             QColor pressedOf(const QColor& color)
             {
@@ -1375,6 +1377,8 @@ namespace Phantom
                 return;
             if (!stroke && !fill)
                 return;
+            if ((!stroke || swatch.color(stroke).alpha() == 0) && (!fill || swatch.color(fill).alpha() == 0))
+                return;
             bool aa = p->testRenderHint(QPainter::Antialiasing);
             if (radius > 0.5) {
                 if (!aa)
@@ -1585,7 +1589,77 @@ void BaseStyle::drawPrimitive(PrimitiveElement elem,
     }
         // Called for the content area on tree view rows that are selected
     case PE_PanelItemViewItem: {
-        QCommonStyle::drawPrimitive(elem, option, painter, widget);
+        auto vopt = qstyleoption_cast<const QStyleOptionViewItem*>(option);
+        if (!vopt) {
+            QCommonStyle::drawPrimitive(elem, option, painter, widget);
+            break;
+        }
+
+        bool selected = vopt->state & State_Selected;
+        bool hovered = (vopt->state & State_MouseOver) && (vopt->state & State_Enabled);
+
+        if (selected || hovered) {
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing, true);
+
+            int hMargin = 4;
+            int vMargin = 1;
+            QRect pillRect = vopt->rect.adjusted(0, vMargin, 0, -vMargin);
+            int radius = qMin(6, pillRect.height() / 2);
+
+            QPainterPath path;
+            switch (vopt->viewItemPosition) {
+            case QStyleOptionViewItem::Beginning:
+                pillRect.setLeft(pillRect.left() + hMargin);
+                path.moveTo(pillRect.right(), pillRect.top());
+                path.lineTo(pillRect.left() + radius, pillRect.top());
+                path.quadTo(pillRect.left(), pillRect.top(), pillRect.left(), pillRect.top() + radius);
+                path.lineTo(pillRect.left(), pillRect.bottom() - radius);
+                path.quadTo(pillRect.left(), pillRect.bottom(), pillRect.left() + radius, pillRect.bottom());
+                path.lineTo(pillRect.right(), pillRect.bottom());
+                path.closeSubpath();
+                break;
+            case QStyleOptionViewItem::End:
+                pillRect.setRight(pillRect.right() - hMargin);
+                path.moveTo(pillRect.left(), pillRect.top());
+                path.lineTo(pillRect.right() - radius, pillRect.top());
+                path.quadTo(pillRect.right(), pillRect.top(), pillRect.right(), pillRect.top() + radius);
+                path.lineTo(pillRect.right(), pillRect.bottom() - radius);
+                path.quadTo(pillRect.right(), pillRect.bottom(), pillRect.right() - radius, pillRect.bottom());
+                path.lineTo(pillRect.left(), pillRect.bottom());
+                path.closeSubpath();
+                break;
+            case QStyleOptionViewItem::Middle:
+                path.addRect(pillRect);
+                break;
+            case QStyleOptionViewItem::OnlyOne:
+            case QStyleOptionViewItem::Invalid:
+            default:
+                pillRect.setLeft(pillRect.left() + hMargin);
+                pillRect.setRight(pillRect.right() - hMargin);
+                path.addRoundedRect(pillRect, radius, radius);
+                break;
+            }
+
+            QColor pillColor;
+            if (selected) {
+                pillColor = (vopt->state & State_Active)
+                    ? vopt->palette.color(QPalette::Highlight)
+                    : vopt->palette.color(QPalette::Highlight).lighter(115);
+            } else {
+                pillColor = (vopt->palette.color(QPalette::WindowText).lightness() > 128)
+                    ? QColor(255, 255, 255, 18)
+                    : QColor(0, 0, 0, 14);
+            }
+
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(pillColor);
+            painter->fillPath(path, pillColor);
+            painter->restore();
+        } else if (vopt->features & QStyleOptionViewItem::Alternate) {
+            QPalette::ColorGroup cg = (vopt->state & State_Enabled) ? QPalette::Normal : QPalette::Disabled;
+            painter->fillRect(vopt->rect, vopt->palette.brush(cg, QPalette::AlternateBase));
+        }
         break;
     }
         // Called for left-of-item-content-area on tree view rows that are selected
@@ -2027,7 +2101,14 @@ void BaseStyle::drawPrimitive(PrimitiveElement elem,
                         Ph::fillRectOutline(painter, option->rect, thickness, borderColor);
                     }
                 } else {
-                    Ph::fillRectOutline(painter, option->rect, 1, swatch.color(S_highlight_outline));
+                    painter->save();
+                    painter->setRenderHint(QPainter::Antialiasing, true);
+                    QRect focusPill = option->rect.adjusted(3, 1, -3, -1);
+                    int r = qMin(6, focusPill.height() / 2);
+                    painter->setPen(QPen(swatch.color(S_highlight_outline), 1));
+                    painter->setBrush(Qt::NoBrush);
+                    painter->drawRoundedRect(focusPill, r, r);
+                    painter->restore();
                 }
                 break;
             }
@@ -2479,6 +2560,17 @@ void BaseStyle::drawControl(ControlElement element,
         }
         QRect bgRect = Ph::expandRect(rect, edges, -1);
         painter->fillRect(bgRect, swatch.color(S_window));
+        if (header->state & State_Sunken) {
+            QColor pressTint = (header->palette.color(QPalette::WindowText).lightness() > 128)
+                ? QColor(255, 255, 255, 24)
+                : QColor(0, 0, 0, 20);
+            painter->fillRect(bgRect, pressTint);
+        } else if (header->state & State_MouseOver) {
+            QColor hoverTint = (header->palette.color(QPalette::WindowText).lightness() > 128)
+                ? QColor(255, 255, 255, 14)
+                : QColor(0, 0, 0, 10);
+            painter->fillRect(bgRect, hoverTint);
+        }
         Ph::fillRectEdges(painter, rect, edges, 1, swatch.color(S_frame_outline));
         break;
     }
@@ -3098,8 +3190,8 @@ void BaseStyle::drawControl(ControlElement element,
 QPalette BaseStyle::lightModePalette()
 {
     QPalette palette;
-    palette.setColor(QPalette::Active, QPalette::Window, QRgb(0xF7F7F7));
-    palette.setColor(QPalette::Inactive, QPalette::Window, QRgb(0xFCFCFC));
+    palette.setColor(QPalette::Active, QPalette::Window, QRgb(0xF1F3F5));
+    palette.setColor(QPalette::Inactive, QPalette::Window, QRgb(0xF1F3F5));
     palette.setColor(QPalette::Disabled, QPalette::Window, QRgb(0xEDEDED));
 
     palette.setColor(QPalette::Active, QPalette::WindowText, QRgb(0x1D1D20));
@@ -3120,15 +3212,15 @@ QPalette BaseStyle::lightModePalette()
     palette.setColor(QPalette::Inactive, QPalette::BrightText, QRgb(0xEAEAEB));
     palette.setColor(QPalette::Disabled, QPalette::BrightText, QRgb(0xE4E5E7));
 
-    palette.setColor(QPalette::Active, QPalette::Base, QRgb(0xF9F9F9));
-    palette.setColor(QPalette::Inactive, QPalette::Base, QRgb(0xFCFCFC));
+    palette.setColor(QPalette::Active, QPalette::Base, QRgb(0xFFFFFF));
+    palette.setColor(QPalette::Inactive, QPalette::Base, QRgb(0xFFFFFF));
     palette.setColor(QPalette::Disabled, QPalette::Base, QRgb(0xEFEFF2));
 
-    palette.setColor(QPalette::Active, QPalette::AlternateBase, QRgb(0xECF3E8));
-    palette.setColor(QPalette::Inactive, QPalette::AlternateBase, QRgb(0xF1F6EE));
-    palette.setColor(QPalette::Disabled, QPalette::AlternateBase, QRgb(0xE1E9DD));
+    palette.setColor(QPalette::Active, QPalette::AlternateBase, QRgb(0xEAECEF));
+    palette.setColor(QPalette::Inactive, QPalette::AlternateBase, QRgb(0xF0F2F5));
+    palette.setColor(QPalette::Disabled, QPalette::AlternateBase, QRgb(0xE5E7EA));
 
-    palette.setColor(QPalette::All, QPalette::ToolTipBase, QRgb(0xF7F7F7));
+    palette.setColor(QPalette::All, QPalette::ToolTipBase, QRgb(0xF1F3F5));
     palette.setColor(QPalette::All, QPalette::ToolTipText, QRgb(0x1D1D20));
 
     palette.setColor(QPalette::Active, QPalette::Button, QRgb(0xD4D5DD));
@@ -3139,8 +3231,8 @@ QPalette BaseStyle::lightModePalette()
     palette.setColor(QPalette::Inactive, QPalette::ButtonText, QRgb(0x454A54));
     palette.setColor(QPalette::Disabled, QPalette::ButtonText, QRgb(0x97979B));
 
-    palette.setColor(QPalette::Active, QPalette::Highlight, QRgb(0x549CFF));
-    palette.setColor(QPalette::Inactive, QPalette::Highlight, QRgb(0x96C2FF));
+    palette.setColor(QPalette::Active, QPalette::Highlight, QRgb(0x007AFF));
+    palette.setColor(QPalette::Inactive, QPalette::Highlight, QRgb(0x549CFF));
     palette.setColor(QPalette::Disabled, QPalette::Highlight, QRgb(0xBFDAFF));
 
     palette.setColor(QPalette::Active, QPalette::HighlightedText, QRgb(0xFFFFFF));
@@ -3153,9 +3245,9 @@ QPalette BaseStyle::lightModePalette()
     palette.setColor(QPalette::All, QPalette::Dark, QRgb(0xBBBBC2));
     palette.setColor(QPalette::All, QPalette::Shadow, QRgb(0x6C6D79));
 
-    palette.setColor(QPalette::All, QPalette::Link, QRgb(0x4090FF));
+    palette.setColor(QPalette::All, QPalette::Link, QRgb(0x007AFF));
     palette.setColor(QPalette::Disabled, QPalette::Link, QRgb(0x3388FF));
-    palette.setColor(QPalette::All, QPalette::LinkVisited, QRgb(0x4090FF));
+    palette.setColor(QPalette::All, QPalette::LinkVisited, QRgb(0x007AFF));
     palette.setColor(QPalette::Disabled, QPalette::LinkVisited, QRgb(0x3388FF));
 
     return palette;
@@ -3164,9 +3256,9 @@ QPalette BaseStyle::lightModePalette()
 QPalette BaseStyle::darkModePalette()
 {
     QPalette palette;
-    palette.setColor(QPalette::Active, QPalette::Window, QRgb(0x2C2C2D));
-    palette.setColor(QPalette::Inactive, QPalette::Window, QRgb(0x2C2C2D));
-    palette.setColor(QPalette::Disabled, QPalette::Window, QRgb(0x424242));
+    palette.setColor(QPalette::Active, QPalette::Window, QRgb(0x18181A));
+    palette.setColor(QPalette::Inactive, QPalette::Window, QRgb(0x18181A));
+    palette.setColor(QPalette::Disabled, QPalette::Window, QRgb(0x28282A));
 
     palette.setColor(QPalette::Active, QPalette::WindowText, QRgb(0xCACBCE));
     palette.setColor(QPalette::Inactive, QPalette::WindowText, QRgb(0xC8C8C6));
@@ -3186,15 +3278,15 @@ QPalette BaseStyle::darkModePalette()
     palette.setColor(QPalette::Inactive, QPalette::BrightText, QRgb(0x2D2D2F));
     palette.setColor(QPalette::Disabled, QPalette::BrightText, QRgb(0x333333));
 
-    palette.setColor(QPalette::Active, QPalette::Base, QRgb(0x27272A));
-    palette.setColor(QPalette::Inactive, QPalette::Base, QRgb(0x2A2A2D));
-    palette.setColor(QPalette::Disabled, QPalette::Base, QRgb(0x343437));
+    palette.setColor(QPalette::Active, QPalette::Base, QRgb(0x242426));
+    palette.setColor(QPalette::Inactive, QPalette::Base, QRgb(0x242426));
+    palette.setColor(QPalette::Disabled, QPalette::Base, QRgb(0x1E1E20));
 
-    palette.setColor(QPalette::Active, QPalette::AlternateBase, QRgb(0x2C2C30));
-    palette.setColor(QPalette::Inactive, QPalette::AlternateBase, QRgb(0x2B2B2F));
-    palette.setColor(QPalette::Disabled, QPalette::AlternateBase, QRgb(0x36363A));
+    palette.setColor(QPalette::Active, QPalette::AlternateBase, QRgb(0x2E2E32));
+    palette.setColor(QPalette::Inactive, QPalette::AlternateBase, QRgb(0x2E2E32));
+    palette.setColor(QPalette::Disabled, QPalette::AlternateBase, QRgb(0x262628));
 
-    palette.setColor(QPalette::All, QPalette::ToolTipBase, QRgb(0x3B3B3D));
+    palette.setColor(QPalette::All, QPalette::ToolTipBase, QRgb(0x242426));
     palette.setColor(QPalette::All, QPalette::ToolTipText, QRgb(0xCACBCE));
 
     palette.setColor(QPalette::Active, QPalette::Button, QRgb(0x28282B));
@@ -3205,11 +3297,11 @@ QPalette BaseStyle::darkModePalette()
     palette.setColor(QPalette::Inactive, QPalette::ButtonText, QRgb(0x9E9FA5));
     palette.setColor(QPalette::Disabled, QPalette::ButtonText, QRgb(0x73747E));
 
-    palette.setColor(QPalette::Active, QPalette::Highlight, QRgb(0x447FCF));
-    palette.setColor(QPalette::Inactive, QPalette::Highlight, QRgb(0x3B6EB3));
+    palette.setColor(QPalette::Active, QPalette::Highlight, QRgb(0x007AFF));
+    palette.setColor(QPalette::Inactive, QPalette::Highlight, QRgb(0x007AFF));
     palette.setColor(QPalette::Disabled, QPalette::Highlight, QRgb(0x315B94));
 
-    palette.setColor(QPalette::Active, QPalette::HighlightedText, QRgb(0xCCCCCC));
+    palette.setColor(QPalette::Active, QPalette::HighlightedText, QRgb(0xFFFFFF));
     palette.setColor(QPalette::Inactive, QPalette::HighlightedText, QRgb(0xCECECE));
     palette.setColor(QPalette::Disabled, QPalette::HighlightedText, QRgb(0x707070));
 
