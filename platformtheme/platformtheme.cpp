@@ -15,6 +15,12 @@
 #include <private/qiconloader_p.h>
 #include <private/qwindow_p.h>
 #include <private/qguiapplication_p.h>
+#include <QFile>
+#include <QTimer>
+
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 
 extern void updateXdgIconSystemTheme();
 
@@ -35,6 +41,32 @@ void onDarkModeChanged()
 PlatformTheme::PlatformTheme()
     : m_hints(new HintsSettings)
 {
+#ifdef __GLIBC__
+    mallopt(M_ARENA_MAX, 2);
+    mallopt(M_TRIM_THRESHOLD, 128 * 1024);
+    mallopt(M_MMAP_THRESHOLD, 64 * 1024);
+#endif
+
+    if (qEnvironmentVariableIsEmpty("QSG_RENDER_LOOP")) {
+        qputenv("QSG_RENDER_LOOP", "basic");
+    }
+
+    if (qEnvironmentVariableIsEmpty("__EGL_VENDOR_LIBRARY_FILENAMES")) {
+        if (!QFile::exists(QStringLiteral("/dev/nvidia0")) &&
+            QFile::exists(QStringLiteral("/usr/share/glvnd/egl_vendor.d/50_mesa.json"))) {
+            qputenv("__EGL_VENDOR_LIBRARY_FILENAMES", "/usr/share/glvnd/egl_vendor.d/50_mesa.json");
+        }
+    }
+
+    QTimer *trimTimer = new QTimer(this);
+    trimTimer->setInterval(60000);
+    connect(trimTimer, &QTimer::timeout, this, []() {
+#ifdef __GLIBC__
+        malloc_trim(0);
+#endif
+    });
+    trimTimer->start();
+
     // qApp->setProperty("_hints_settings_object", (quintptr)m_hints);
 
     connect(m_hints, &HintsSettings::systemFontChanged, this, &PlatformTheme::onFontChanged);
