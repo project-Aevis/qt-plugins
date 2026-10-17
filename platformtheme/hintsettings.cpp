@@ -1,7 +1,28 @@
+/*
+ * Copyright (C) 2021 CutefishOS Team.
+ * Copyright (C) 2026 Project Aevis Contributors.
+ *
+ * Author:     Reion Wong <reionwong@gmail.com>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #include "hintsettings.h"
 
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QString>
 #include <QFileInfo>
 #include <QToolBar>
@@ -25,8 +46,12 @@ static const QByteArray s_systemFontName = QByteArrayLiteral("Font");
 static const QByteArray s_systemFixedFontName = QByteArrayLiteral("FixedFont");
 static const QByteArray s_systemPointFontSize = QByteArrayLiteral("FontSize");
 static const QByteArray s_darkModeName = QByteArrayLiteral("DarkMode");
-static const QByteArray s_lightIconName = QByteArrayLiteral("Crule");
-static const QByteArray s_darkIconName = QByteArrayLiteral("Crule-dark");
+static const QByteArray s_lightIconName = (QFile::exists(QStringLiteral("/usr/share/icons/Aevis")) || QFile::exists(QStringLiteral("/usr/share/icons/Aevis-Dark")))
+    ? QByteArrayLiteral("Aevis")
+    : QByteArrayLiteral("Cutefish");
+static const QByteArray s_darkIconName = (QFile::exists(QStringLiteral("/usr/share/icons/Aevis-Dark")) || QFile::exists(QStringLiteral("/usr/share/icons/Cutefish-Dark")))
+    ? (QFile::exists(QStringLiteral("/usr/share/icons/Aevis-Dark")) ? QByteArrayLiteral("Aevis-Dark") : QByteArrayLiteral("Cutefish-Dark"))
+    : QByteArrayLiteral("Cutefish-Dark");
 
 static QString availableFontFamily(const QString &requested, const QString &fallback)
 {
@@ -37,23 +62,43 @@ static QString availableFontFamily(const QString &requested, const QString &fall
         return requested;
     if (families.contains(fallback))
         return fallback;
+    if (families.contains(QStringLiteral("SF Pro Text")))
+        return QStringLiteral("SF Pro Text");
+    if (families.contains(QStringLiteral("SF Pro Display")))
+        return QStringLiteral("SF Pro Display");
+    if (families.contains(QStringLiteral("SF Pro")))
+        return QStringLiteral("SF Pro");
+    if (families.contains(QStringLiteral("Noto Sans")))
+        return QStringLiteral("Noto Sans");
 
     return QStringLiteral("Sans Serif");
 }
 
 HintsSettings::HintsSettings(QObject *parent)
     : QObject(parent),
-      m_settings(new QSettings(QSettings::UserScope, "cutefishos", "theme"))
+      m_settings(new QSettings(QSettings::UserScope,
+                               QFile::exists(QDir::homePath() + QStringLiteral("/.config/aevis/theme.conf")) ? QStringLiteral("aevis") : QStringLiteral("cutefishos"),
+                               QStringLiteral("theme")))
 {
-    m_iconTheme = m_settings->value("IconTheme", "Crule").toString();
+    const QString defaultTheme = QString::fromLatin1(darkMode() ? s_darkIconName : s_lightIconName);
+    m_iconTheme = m_settings->value("IconTheme", defaultTheme).toString();
 
-    if (m_iconTheme.contains("Crule"))
+    if (m_iconTheme.isEmpty() || m_iconTheme.contains(QLatin1String("Crule"))
+        || m_iconTheme == QLatin1String("cutefish-dark") || m_iconTheme == QLatin1String("cutefish-light")
+        || m_iconTheme == QLatin1String("aevis-dark") || m_iconTheme == QLatin1String("aevis-light")
+        || m_iconTheme.startsWith(QLatin1String("WhiteSur"), Qt::CaseInsensitive)) {
+        m_iconTheme = defaultTheme;
+    }
+
+    if (m_iconTheme.startsWith(QLatin1String("Aevis"), Qt::CaseInsensitive)
+        || m_iconTheme.startsWith(QLatin1String("Cutefish"), Qt::CaseInsensitive)) {
         m_hints[QPlatformTheme::SystemIconThemeName] = darkMode() ? s_darkIconName : s_lightIconName;
-    else
+    } else {
         m_hints[QPlatformTheme::SystemIconThemeName] = m_iconTheme;
+    }
 
     m_hints[QPlatformTheme::SystemIconFallbackThemeName] = s_lightIconName;
-    m_hints[QPlatformTheme::StyleNames] = "cutefish";
+    m_hints[QPlatformTheme::StyleNames] = QStringList() << QStringLiteral("aevis") << QStringLiteral("cutefish");
     m_hints[QPlatformTheme::SystemIconFallbackThemeName] = QStringLiteral("hicolor");
     m_hints[QPlatformTheme::IconThemeSearchPaths] = xdgIconThemePaths();
     m_hints[QPlatformTheme::UseFullScreenForPopupMenu] = false;
@@ -92,8 +137,8 @@ QStringList HintsSettings::xdgIconThemePaths() const
 
 QString HintsSettings::systemFont() const
 {
-    return availableFontFamily(m_settings->value(s_systemFontName, "Noto Sans").toString(),
-                               QStringLiteral("DejaVu Sans"));
+    return availableFontFamily(m_settings->value(s_systemFontName, "SF Pro Text").toString(),
+                               QStringLiteral("SF Pro"));
 }
 
 QString HintsSettings::systemFixedFont() const
@@ -136,18 +181,26 @@ void HintsSettings::onFileChanged(const QString &path)
                 emit systemFontPointSizeChanged(newValue.toDouble());
             else if (value == s_darkModeName) {
                 emit darkModeChanged(newValue.toBool());
-                // Need to update the icon to dark
-
-                if (m_iconTheme.contains("Crule"))
+                if (m_iconTheme.startsWith(QLatin1String("Aevis"), Qt::CaseInsensitive)
+                    || m_iconTheme.startsWith(QLatin1String("Cutefish"), Qt::CaseInsensitive)) {
                     m_hints[QPlatformTheme::SystemIconThemeName] = darkMode() ? s_darkIconName : s_lightIconName;
-
+                }
                 emit iconThemeChanged();
             } else if (value == "IconTheme") {
-                if (!m_iconTheme.contains("Crule")) {
-                    m_iconTheme = newValue.toString();
+                QString newTheme = newValue.toString();
+                if (newTheme.isEmpty() || newTheme.contains(QLatin1String("Crule"))
+                    || newTheme == QLatin1String("cutefish-dark") || newTheme == QLatin1String("cutefish-light")
+                    || newTheme == QLatin1String("aevis-dark") || newTheme == QLatin1String("aevis-light")
+                    || newTheme.startsWith(QLatin1String("WhiteSur"), Qt::CaseInsensitive)) {
+                    newTheme = QString::fromLatin1(darkMode() ? s_darkIconName : s_lightIconName);
+                }
+                m_iconTheme = newTheme;
+                if (m_iconTheme.startsWith(QLatin1String("Aevis"), Qt::CaseInsensitive)
+                    || m_iconTheme.startsWith(QLatin1String("Cutefish"), Qt::CaseInsensitive)) {
+                    m_hints[QPlatformTheme::SystemIconThemeName] = darkMode() ? s_darkIconName : s_lightIconName;
+                } else {
                     m_hints[QPlatformTheme::SystemIconThemeName] = m_iconTheme;
                 }
-
                 emit iconThemeChanged();
             }
         }
